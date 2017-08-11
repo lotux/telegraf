@@ -4,6 +4,7 @@ package ping
 
 import (
 	"errors"
+	"log"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -171,6 +172,7 @@ func processPingOutput(out string) (int, int, float64, float64, float64, float64
 	err := errors.New("Fatal error processing ping output")
 	lines := strings.Split(out, "\n")
 	for _, line := range lines {
+		log.Printf("D! %q", line)
 		if strings.Contains(line, "transmitted") &&
 			strings.Contains(line, "received") {
 			err = nil
