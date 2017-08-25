@@ -34,6 +34,7 @@ type InfluxDB struct {
 	Timeout          internal.Duration
 	UDPPayload       int    `toml:"udp_payload"`
 	HTTPProxy        string `toml:"http_proxy"`
+	ContentEncoding  string `toml:"content_encoding"`
 
 	// Path to CA file
 	SSLCA string `toml:"ssl_ca"`
@@ -87,6 +88,9 @@ var sampleConfig = `
 
   ## HTTP Proxy Config
   # http_proxy = "http://corporate.proxy:3128"
+
+  ## Compress each HTTP request payload using GZIP.
+  # content_encoding = "gzip"
 `
 
 // Connect initiates the primary connection to the range of provided URLs
@@ -121,13 +125,14 @@ func (i *InfluxDB) Connect() error {
 		default:
 			// If URL doesn't start with "udp", assume HTTP client
 			config := client.HTTPConfig{
-				URL:       u,
-				Timeout:   i.Timeout.Duration,
-				TLSConfig: tlsConfig,
-				UserAgent: i.UserAgent,
-				Username:  i.Username,
-				Password:  i.Password,
-				HTTPProxy: i.HTTPProxy,
+				URL:             u,
+				Timeout:         i.Timeout.Duration,
+				TLSConfig:       tlsConfig,
+				UserAgent:       i.UserAgent,
+				Username:        i.Username,
+				Password:        i.Password,
+				HTTPProxy:       i.HTTPProxy,
+				ContentEncoding: i.ContentEncoding,
 			}
 			wp := client.WriteParams{
 				Database:        i.Database,
@@ -194,6 +199,7 @@ func (i *InfluxDB) Write(metrics []telegraf.Metric) error {
 						i.Database)
 				}
 			}
+
 			if strings.Contains(e.Error(), "field type conflict") {
 				log.Printf("E! Field type conflict, dropping conflicted points: %s", e)
 				// setting err to nil, otherwise we will keep retrying and points
@@ -201,6 +207,31 @@ func (i *InfluxDB) Write(metrics []telegraf.Metric) error {
 				err = nil
 				break
 			}
+
+			if strings.Contains(e.Error(), "points beyond retention policy") {
+				log.Printf("W! Points beyond retention policy: %s", e)
+				// This error is indicates the point is older than the
+				// retention policy permits, and is probably not a cause for
+				// concern.  Retrying will not help unless the retention
+				// policy is modified.
+				err = nil
+				break
+			}
+
+			if strings.Contains(e.Error(), "unable to parse") {
+				log.Printf("E! Parse error; dropping points: %s", e)
+				// This error indicates a bug in Telegraf or InfluxDB parsing
+				// of line protocol.  Retries will not be successful.
+				err = nil
+				break
+			}
+
+			if strings.Contains(e.Error(), "hinted handoff queue not empty") {
+				// This is an informational message
+				err = nil
+				break
+			}
+
 			// Log write failure
 			log.Printf("E! InfluxDB Output Error: %s", e)
 		} else {
